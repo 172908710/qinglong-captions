@@ -10,6 +10,7 @@ import pysrt
 from config.config import (
     APPLICATION_EXTENSIONS_SET,
     AUDIO_EXTENSIONS_SET,
+    IMAGE_EXTENSIONS_SET,
     VIDEO_EXTENSIONS_SET,
 )
 from module.providers.base import CaptionResult, CaptionStatus
@@ -17,6 +18,7 @@ from module.providers.image_template import (
     active_image_template,
     postprocess_image_template_text,
 )
+from utils.caption_modes import normalize_embedded_caption_sections
 from utils.parse_display import extract_code_block_content, process_llm_response
 from utils.path_safety import safe_child_path, safe_leaf_name
 
@@ -147,12 +149,21 @@ def normalize_and_validate_subtitle_text(output: str, console=None) -> str:
     return normalized
 
 
-def _caption_result_from_processed(output, metadata: dict | None = None) -> CaptionResult:
+def _caption_result_from_processed(output, metadata: dict | None = None, *, filepath=None, args=None, raw=None) -> CaptionResult:
     metadata = dict(metadata or {})
     if isinstance(output, CaptionResult):
         return output
     if isinstance(output, dict):
-        return CaptionResult(raw=json.dumps(output, ensure_ascii=False), parsed=output, metadata=metadata)
+        if filepath is not None and Path(filepath).suffix.lower() in IMAGE_EXTENSIONS_SET:
+            normalized = normalize_embedded_caption_sections(output, getattr(args, "mode", "all"))
+            if normalized != output:
+                output = normalized
+                raw = None
+        return CaptionResult(
+            raw=raw if raw is not None else json.dumps(output, ensure_ascii=False),
+            parsed=output,
+            metadata=metadata,
+        )
     if isinstance(output, list):
         return CaptionResult(raw="\n".join(str(line) for line in output), metadata=metadata)
     return CaptionResult(raw=str(output), metadata=metadata)
@@ -217,7 +228,7 @@ def postprocess_caption_content(output, filepath, args, console):
             output = "\n".join(output)
 
     if isinstance(output, dict):
-        return _caption_result_from_processed(output, metadata)
+        return _caption_result_from_processed(output, metadata, filepath=filepath, args=args)
 
     output = str(output).strip()
     if not output:
@@ -237,7 +248,7 @@ def postprocess_caption_content(output, filepath, args, console):
     try:
         parsed = json.loads(output)
         if isinstance(parsed, dict):
-            return CaptionResult(raw=output, parsed=parsed, metadata=metadata)
+            return _caption_result_from_processed(parsed, metadata, filepath=filepath, args=args, raw=output)
     except json.JSONDecodeError:
         # JSON image prompt templates may wrap output in a ```json fence; strip and retry.
         if active_image_template(args):
@@ -248,7 +259,7 @@ def postprocess_caption_content(output, filepath, args, console):
                 except json.JSONDecodeError:
                     fenced_parsed = None
                 if isinstance(fenced_parsed, dict):
-                    return CaptionResult(raw=fenced, parsed=fenced_parsed, metadata=metadata)
+                    return _caption_result_from_processed(fenced_parsed, metadata, filepath=filepath, args=args, raw=fenced)
 
     if "###" in output:
         shortdescription, long_description = process_llm_response(output)

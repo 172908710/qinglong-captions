@@ -20,6 +20,7 @@ from typing import Any, Optional
 from module.providers.base import CaptionResult, MediaContext, PromptContext
 from module.providers.cloud_vlm_base import CloudVLMProvider
 from module.providers.registry import register_provider
+from utils.caption_modes import normalize_embedded_caption_sections
 from utils.console_util import print_exception
 
 
@@ -190,7 +191,7 @@ class OpenAICompatibleProvider(CloudVLMProvider):
 
     def _filter_by_mode(self, parsed: dict, mode: str) -> dict:
         """根据 mode 过滤字段"""
-        result = dict(parsed)  # 复制
+        result = normalize_embedded_caption_sections(parsed, mode)
         
         if mode == "short":
             # short 模式：移除长描述相关字段
