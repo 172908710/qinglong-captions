@@ -23,6 +23,34 @@ from module.providers.registry import register_provider
 from utils.console_util import print_exception
 
 
+def _ensure_json_instruction(messages: list[dict]) -> list[dict]:
+    """Satisfy JSON-mode validation using message text, never image/video data."""
+    if not messages:
+        return messages
+    for message in messages:
+        content = message.get("content", "")
+        if isinstance(content, str) and "json" in content.lower():
+            return messages
+        if isinstance(content, list) and any(
+            part.get("type") == "text" and "json" in str(part.get("text", "")).lower()
+            for part in content
+            if isinstance(part, dict)
+        ):
+            return messages
+
+    instruction = (
+        "Return only a valid JSON object, without Markdown code fences. "
+        "Preserve the requested information and follow the requested JSON schema if one is specified; "
+        'otherwise put the caption in a string field named "description".'
+    )
+    updated = list(messages)
+    for index, message in enumerate(updated):
+        if message.get("role") == "system" and isinstance(message.get("content"), str):
+            updated[index] = {**message, "content": message["content"] + "\n\n" + instruction}
+            return updated
+    return [{"role": "system", "content": instruction}, *updated]
+
+
 def _is_json_mode_unsupported(error: Exception) -> bool:
     """Only explicit request-format incompatibilities justify a plaintext fallback."""
     if getattr(error, "status_code", None) not in (400, 422):
@@ -97,6 +125,7 @@ class OpenAICompatibleProvider(CloudVLMProvider):
             "max_tokens": max_tokens,
         }
         if use_json_mode:
+            request_params["messages"] = _ensure_json_instruction(messages)
             request_params["response_format"] = {"type": "json_object"}
 
         # Provider.execute owns transport retries; the SDK must not multiply them.
@@ -110,6 +139,8 @@ class OpenAICompatibleProvider(CloudVLMProvider):
                     raise
                 self.log("Retrying without JSON mode...", "yellow")
                 del request_params["response_format"]
+                # Restore the original prompt when the server cannot use JSON mode.
+                request_params["messages"] = messages
                 completion = client.chat.completions.create(**request_params)
             result = completion.choices[0].message.content or ""
         finally:

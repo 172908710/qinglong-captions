@@ -73,7 +73,7 @@ $openai_model_name = "llava:7b"
 | `openai_base_url` | OpenAI API 基础地址；配置后启用该 Provider | 空值 |
 | `openai_model_name` | 服务端模型 ID；脚本和 CLI 默认是空值，应显式填写 | 空值 |
 | 生成参数 | `temperature=0.7`、`max_tokens=2048`；当前未暴露为脚本或 CLI 参数 | Provider 代码默认值 |
-| JSON response format | Provider 会优先请求 JSON；服务端拒绝时自动去掉 `response_format` 重试 | 自动处理 |
+| JSON response format | Provider 优先请求 JSON，并在消息缺少 `json` 时补充 JSON 输出指令；只有服务端明确不支持 JSON 格式时，才恢复原始提示词并去掉 `response_format` 重试 | 自动处理 |
 
 图像输入存在显式本地 `vlm_image_model` 或 `ocr_model` 时，路由会优先使用显式本地 Provider，而不是 `openai_compatible`。视频输入仍需要兼容服务支持视觉消息。
 
@@ -85,7 +85,8 @@ curl http://127.0.0.1:8000/v1/models
 
 - `Connection refused`：服务未启动、端口错误或服务只监听了其他地址。
 - `Model not found`：使用 `/v1/models` 返回的确切 ID。
-- JSON 模式失败：Provider 会自动去掉 `response_format` 重试；如果服务仍拒绝，请检查服务端对视觉消息和 Chat Completions 的兼容程度。
+- `messages must contain the word 'json'`：JSON 模式要求实际消息文本包含 `json`；Provider 会在缺少时补充 JSON 输出指令。修改代码后必须停止旧任务并重新启动，已运行的 Python 进程不会自动加载修复。已有 JSON schema 不会被改写。
+- JSON 格式不受支持：只有服务端明确拒绝 `response_format` / `json_object` 时，Provider 才会恢复原始提示词并去掉 `response_format` 重试。502、断连和超时保持原始 JSON 模式，交由统一重试处理。
 - CUDA out of memory：降低服务端上下文长度、并行度或使用量化模型。
 
 ## 远程服务安全
